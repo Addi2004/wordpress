@@ -1,49 +1,60 @@
-name: CI/CD for WordPress
+name: Deploy to Azure AKS
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+
+env:
+  DOCKERHUB_REPOSITORY: rishabpaul/wordpress
+  AKS_RESOURCE_GROUP: experimentation
+  AKS_CLUSTER_NAME: assignment
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Deployment
     runs-on: ubuntu-latest
 
-    env:
-      IMAGE_NAME: abhithind31/wordpress # Replace with your Docker Hub repository name
-
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout Code
-        uses: actions/checkout@v3
+    - name: Set short git commit SHA
+      id: commit
+      uses: prompt/actions-commit-hash@v2
 
-      # Step 2: Log in to Docker Hub
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+    - name: Check out code
+      uses: actions/checkout@v2
 
-      # Step 3: Build and Push Docker Image
-      - name: Build and Push Docker Image
-        run: |
-          docker build -t $IMAGE_NAME:latest .
-          docker push $IMAGE_NAME:latest
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Step 4: Set up kubectl
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'latest'
+    - name: Build, tag, and push image to Docker Hub
+      env:
+        IMAGE_TAG: ${{ steps.commit.outputs.short }}
+      run: |
+        docker build -t $DOCKERHUB_REPOSITORY:$IMAGE_TAG .
+        docker push $DOCKERHUB_REPOSITORY:$IMAGE_TAG
+    - name: Log in to Azure CLI
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Step 5: Configure Kubernetes context
-      - name: Configure Kubernetes Context
-        run: |
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig
-          export KUBECONFIG=$PWD/kubeconfig
-          kubectl config view
+    - name: Set up AKS credentials
+      run: az aks get-credentials --resource-group $AKS_RESOURCE_GROUP --name $AKS_CLUSTER_NAME --overwrite-existing
 
-      # Step 6: Deploy to Kubernetes
-      - name: Deploy to Kubernetes
-        run: |
-          kubectl set image deployment/wordpress wordpress=$IMAGE_NAME:latest -n wordpress
+    - name: Scale Down Deployment to Prevent Multi-Attach Error
+      run: |
+        # Scale down the deployment to 0 replicas to release the volume
+        kubectl scale deployment wordpress --replicas=0 -n wordpress
+        # Wait for the pods to terminate
+        kubectl wait --for=delete pod -l app=wordpress -n wordpress --timeout=120s || true
+    - name: Update Deployment Image
+      env:
+        IMAGE_TAG: ${{ steps.commit.outputs.short }}
+      run: |
+        # Update the image in the deployment
+        kubectl set image deployment/wordpress wordpress=$DOCKERHUB_REPOSITORY:$IMAGE_TAG -n wordpress
+    - name: Scale Up Deployment
+      run: |
+        # Scale up the deployment back to the desired number of replicas
+        kubectl scale deployment wordpress --replicas=1 -n wordpress
