@@ -5,7 +5,7 @@ on:
     branches: [ main ]
 
 env:
-  DOCKERHUB_REPOSITORY: rishabpaul/wordpress
+  DOCKERHUB_REPOSITORY: rishabpaul27/wordpress
   AKS_RESOURCE_GROUP: experimentation
   AKS_CLUSTER_NAME: assignment
 
