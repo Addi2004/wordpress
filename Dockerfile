@@ -4,3 +4,4 @@ FROM bitnami/wordpress:latest
 COPY wp-content/themes /opt/bitnami/wordpress/wp-content/themes
 
 USER 1001
+#hi there
